@@ -307,7 +307,7 @@ def tactic_contradiction(state: ProofState) -> ProofState:
     if current is None:
         raise Exception("No current goal")
     ctx, _ = current
-    if any(h[0] == "bottom" for h in ctx):
+    if any(hyp[1][0] == "bottom" for hyp in ctx):
         return ProofState(state.goals[:-1])
     else:
         raise Exception("contradiction failed: ⊥ not in context")
