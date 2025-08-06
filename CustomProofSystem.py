@@ -29,6 +29,8 @@ Prop = Union[
     Tuple[str, str, 'Prop'],  # "forall", "exists"
 ]
 
+Context = List[Tuple[str, Prop]] 
+
 def var(name: str) -> Prop:
     return ("var", name)
 
@@ -140,7 +142,8 @@ Goal = Tuple[Context, Prop]
 
 class ProofState:
     def __init__(self, goals: List[Goal]):
-        self.goals = goals
+        self.goals = goals 
+        self.context = []
 
     def current(self) -> Optional[Goal]:
         return self.goals[-1] if self.goals else None
@@ -170,25 +173,30 @@ def tactic_intro(state: ProofState, name: str = "H") -> ProofState:
     tag = goal[0]
     if tag == "implies":
         premise, conclusion = goal[1], goal[2]
-        new_ctx = ctx + [premise]
+        new_ctx = ctx + [(name, premise)]
         return state.add_subgoals([(new_ctx, conclusion)])
     elif tag == "forall":
         varname, body = goal[1], goal[2]
-        # Replace bound var with a fresh var (just use name)
         fresh_var = ("var", name)
         new_body = substitute(body, varname, fresh_var)
         return state.add_subgoals([(ctx, new_body)])
     else:
         raise Exception("intro tactic failed: goal is not implication or forall")
 
-def tactic_exact(state: ProofState, prop: Prop) -> ProofState:
+def tactic_exact(state: ProofState, ref: Union[str, Prop]) -> ProofState:
     current = state.current()
     if current is None:
         raise Exception("No current goal")
     ctx, goal = current
-    if prop in ctx and prop_eq(prop, goal):
-        return ProofState(state.goals[:-1])
+
+    if isinstance(ref, str):
+        for (name, formula) in ctx[::-1]:
+            if name == ref and prop_eq(formula, goal):
+                return ProofState(state.goals[:-1])
+        raise Exception("exact tactic failed: no matching named hypothesis")
     else:
+        if any(prop_eq(f, goal) for (_, f) in ctx):
+            return ProofState(state.goals[:-1])
         raise Exception("exact tactic failed: term doesn't match goal or not in context")
 
 def tactic_apply(state: ProofState, implication: Prop) -> ProofState:
@@ -212,24 +220,26 @@ def tactic_split(state: ProofState) -> ProofState:
     else:
         raise Exception("split tactic failed: goal is not conjunction")
 
-def tactic_destruct(state: ProofState, index: int) -> ProofState:
+def tactic_destruct(state: ProofState, name: str) -> ProofState:
     current = state.current()
     if current is None:
         raise Exception("No current goal")
     ctx, goal = current
-    if index < 0 or index >= len(ctx):
-        raise Exception("destruct tactic failed: index out of range")
-    hyp = ctx[index]
-    new_ctx = ctx[:index] + ctx[index+1:]
-    if hyp[0] == "and":
-        new_ctx2 = new_ctx + [hyp[1], hyp[2]]
-        return state.add_subgoals([(new_ctx2, goal)])
-    elif hyp[0] == "or":
-        ctx1 = new_ctx + [hyp[1]]
-        ctx2 = new_ctx + [hyp[2]]
-        return state.add_subgoals([(ctx1, goal), (ctx2, goal)])
-    else:
-        raise Exception("destruct tactic failed: hypothesis is not ∧ or ∨")
+    for i, (n, f) in enumerate(ctx):
+        if n == name:
+            hyp = f
+            ctx_before = ctx[:i]
+            ctx_after = ctx[i+1:]
+            if hyp[0] == "and":
+                new_ctx = ctx_before + [(f"{name}_left", hyp[1]), (f"{name}_right", hyp[2])] + ctx_after
+                return state.add_subgoals([(new_ctx, goal)])
+            elif hyp[0] == "or":
+                left_ctx = ctx_before + [(f"{name}_left", hyp[1])] + ctx_after
+                right_ctx = ctx_before + [(f"{name}_right", hyp[2])] + ctx_after
+                return state.add_subgoals([(left_ctx, goal), (right_ctx, goal)])
+            else:
+                raise Exception("destruct tactic failed: hypothesis is not ∧ or ∨")
+    raise Exception("destruct tactic failed: name not found")
 
 def tactic_left(state: ProofState) -> ProofState:
     current = state.current()
@@ -251,21 +261,21 @@ def tactic_right(state: ProofState) -> ProofState:
     else:
         raise Exception("right tactic failed: goal is not disjunction")
 
-def tactic_forall_elim(state: ProofState, hyp_index: int, term: Term) -> ProofState:
+def tactic_forall_elim(state: ProofState, hyp_idx: int, term: Term) -> ProofState:
     current = state.current()
     if current is None:
         raise Exception("No current goal")
     ctx, goal = current
-    if hyp_index < 0 or hyp_index >= len(ctx):
-        raise Exception("forall_elim failed: index out of range")
-    hyp = ctx[hyp_index]
-    if hyp[0] == "forall":
-        varname, body = hyp[1], hyp[2]
-        new_prop = substitute(body, varname, term)
-        new_ctx = ctx + [new_prop]
-        return state.add_subgoals([(new_ctx, goal)])
-    else:
-        raise Exception("forall_elim failed: hypothesis not ∀")
+    if hyp_idx < 0 or hyp_idx >= len(ctx):
+        raise Exception("forall_elim failed: hypothesis index out of range")
+    hyp_name, hyp = ctx[hyp_idx]
+    if hyp[0] != "forall":
+        raise Exception("forall_elim failed: hypothesis at index is not ∀")
+    varname, body = hyp[1], hyp[2]
+    new_prop = substitute(body, varname, term)
+    new_ctx = ctx + [(f"{hyp_name}_inst", new_prop)]
+    return state.add_subgoals([(new_ctx, goal)])
+
 
 def tactic_exists_intro(state: ProofState, term: Term) -> ProofState:
     current = state.current()
@@ -294,7 +304,17 @@ def tactic_assume(state: ProofState, prop: Prop) -> ProofState:
     if current is None:
         raise Exception("No current goal")
     ctx, goal = current
-    new_ctx = ctx + [prop]
+
+    # Generate fresh name Hn not in ctx
+    existing_names = {name for name, _ in ctx}
+    n = 1
+    while True:
+        name = f"H{n}"
+        if name not in existing_names:
+            break
+        n += 1
+
+    new_ctx = ctx + [(name, prop)]
     return state.add_subgoals([(new_ctx, goal)])
 
 # === Lexer and Parser ===
@@ -518,7 +538,16 @@ def process_command(state: Optional[ProofState], command: str) -> Optional[Proof
                 print("Usage: destruct <index>")
                 return state
             idx = int(arg)
-            new_state = tactic_destruct(state, idx)
+            current = state.current()
+            if current is None:
+                print("No current goal")
+                return state
+            ctx, _ = current
+            if idx < 0 or idx >= len(ctx):
+                print("Invalid hypothesis index")
+                return state
+            hyp_name, _ = ctx[idx]
+            new_state = tactic_destruct(state, hyp_name)
             print(new_state)
             return new_state
 
@@ -550,6 +579,7 @@ def process_command(state: Optional[ProofState], command: str) -> Optional[Proof
             new_state = tactic_forall_elim(state, hyp_idx, term_parsed)
             print(new_state)
             return new_state
+
 
         elif cmd_name == "exists_intro":
             if arg is None:
@@ -586,6 +616,19 @@ def process_command(state: Optional[ProofState], command: str) -> Optional[Proof
         elif cmd_name == "exit":
             print("Exiting.")
             sys.exit(0)
+
+        elif cmd_name == "context":
+            current = state.current() if state else None
+            if current is None:
+                print("No current goal")
+                return state
+            ctx, _ = current
+            if not ctx:
+                print("Context is empty")
+            else:
+                for i, (name, prop) in enumerate(ctx):
+                    print(f"{i}: {name} : {prop_repr(prop)}")
+            return state
 
         else:
             print(f"Unknown command: {cmd_name}")

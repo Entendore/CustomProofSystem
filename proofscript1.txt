@@ -1,0 +1,4 @@
+goal ∀x. P(x) → P(x)
+intro x
+intro
+exact P(x)

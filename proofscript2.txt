@@ -1,0 +1,4 @@
+goal (P ∧ Q) → P
+intro
+destruct 0
+exact P
