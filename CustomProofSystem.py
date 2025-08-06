@@ -18,7 +18,7 @@ from typing import List, Tuple, Optional, Callable, Union
 # ("exists", var_name, body)
 # ("bottom",)
 
-Term = Union[Tuple[str, str], Tuple[str, str, List]]  # ("var", name) or ("const", name) or ("pred", name, [args])
+Term = Union[Tuple[str, str], Tuple[str, str, List], Tuple[str, str, List['Term']]]  # ("var", name) or ("const", name) or ("pred", name, [args])
 
 Prop = Union[
     Tuple[str, str],  # "var" or "const"
@@ -30,6 +30,9 @@ Prop = Union[
 ]
 
 Context = List[Tuple[str, Prop]] 
+
+def fun(name: str, args: List[Term]) -> Term:
+    return ("fun", name, args)
 
 def var(name: str) -> Prop:
     return ("var", name)
@@ -154,14 +157,24 @@ class ProofState:
     def add_subgoals(self, new_goals: List[Goal]) -> 'ProofState':
         return ProofState(self.goals[:-1] + new_goals)
 
-    def __repr__(self) -> str:
-        if self.is_complete():
+    def pretty_print_proofstate(state: ProofState) -> str:
+        if state.is_complete():
             return "Proof complete."
+
         lines = []
-        for i, (ctx, goal) in enumerate(self.goals):
-            ctx_str = ', '.join(prop_repr(p) for p in ctx) if ctx else "∅"
-            lines.append(f"Goal {i+1}: {ctx_str} ⊢ {prop_repr(goal)}")
+        for i, (ctx, goal) in enumerate(state.goals):
+            lines.append(f"Goal {i+1}:")
+            if not ctx:
+                lines.append("  Context: ∅")
+            else:
+                lines.append("  Context:")
+                for name, prop in ctx:
+                    lines.append(f"    {name} : {prop_repr(prop)}")
+            lines.append(f"  Goal: {prop_repr(goal)}")
+            lines.append("")
         return "\n".join(lines)
+
+    ProofState.__repr__ = pretty_print_proofstate
 
 # === Tactics ===
 
@@ -317,6 +330,155 @@ def tactic_assume(state: ProofState, prop: Prop) -> ProofState:
     new_ctx = ctx + [(name, prop)]
     return state.add_subgoals([(new_ctx, goal)])
 
+def tactic_rename(state: ProofState, old_name: str, new_name: str) -> ProofState:
+    current = state.current()
+    if current is None:
+        raise Exception("No current goal")
+    ctx, goal = current
+
+    # Check old_name exists, and new_name does not clash
+    names = [name for name, _ in ctx]
+    if old_name not in names:
+        raise Exception(f"rename failed: hypothesis '{old_name}' not found")
+    if new_name in names:
+        raise Exception(f"rename failed: hypothesis '{new_name}' already exists")
+
+    new_ctx = [(new_name if name == old_name else name, prop) for name, prop in ctx]
+    return state.add_subgoals([(new_ctx, goal)])
+
+
+def tactic_clear(state: ProofState, name: str) -> ProofState:
+    current = state.current()
+    if current is None:
+        raise Exception("No current goal")
+    ctx, goal = current
+
+    new_ctx = [(n, p) for (n, p) in ctx if n != name]
+    if len(new_ctx) == len(ctx):
+        raise Exception(f"clear failed: hypothesis '{name}' not found")
+
+    return state.add_subgoals([(new_ctx, goal)])
+
+def tactic_not_intro(state: ProofState, name: str = "H") -> ProofState:
+    current = state.current()
+    if current is None:
+        raise Exception("No current goal")
+    ctx, goal = current
+    if goal[0] != "not":
+        raise Exception("not_intro tactic failed: goal is not a negation ¬P")
+    p = goal[1]
+    # Add p as hypothesis with given name, goal becomes bottom
+    new_ctx = ctx + [(name, p)]
+    return state.add_subgoals([(new_ctx, ("bottom",))])
+
+def tactic_not_elim(state: ProofState, neg_name: str, pos_name: str, bottom_name: str = "Hbot") -> ProofState:
+    current = state.current()
+    if current is None:
+        raise Exception("No current goal")
+    ctx, goal = current
+
+    # Find hypotheses by name
+    neg_hyp = None
+    pos_hyp = None
+    for n, f in ctx:
+        if n == neg_name:
+            neg_hyp = f
+        if n == pos_name:
+            pos_hyp = f
+    if neg_hyp is None or pos_hyp is None:
+        raise Exception("not_elim tactic failed: hypotheses not found")
+
+    if neg_hyp[0] != "not":
+        raise Exception(f"not_elim tactic failed: hypothesis {neg_name} is not a negation ¬P")
+    if not prop_eq(neg_hyp[1], pos_hyp):
+        raise Exception(f"not_elim tactic failed: {neg_name} is ¬P but {pos_name} is not P")
+
+    # Add bottom hypothesis to context, goal stays the same
+    new_ctx = ctx + [(bottom_name, ("bottom",))]
+    return state.add_subgoals([(new_ctx, goal)])
+
+
+def tactic_assumption(state: ProofState) -> ProofState:
+    current = state.current()
+    if current is None:
+        raise Exception("No current goal")
+    ctx, goal = current
+    for name, hyp in reversed(ctx):
+        if prop_eq(hyp, goal):
+            return ProofState(state.goals[:-1])
+    raise Exception("assumption failed: no matching hypothesis")
+
+def simplify_prop(p: Prop) -> Prop:
+    # Basic simplifications (extend as needed)
+    tag = p[0]
+    if tag in ("implies", "and", "or"):
+        left = simplify_prop(p[1])
+        right = simplify_prop(p[2])
+        if tag == "implies" and prop_eq(left, right):
+            # P → P is True (replace with a tautology, or just keep)
+            return ("implies", left, right)  # or a const True if you add it
+        if tag == "and":
+            # Simplify ⊥ ∧ P or P ∧ ⊥ to ⊥
+            if left[0] == "bottom" or right[0] == "bottom":
+                return ("bottom",)
+        return (tag, left, right)
+    elif tag == "not":
+        inner = simplify_prop(p[1])
+        return ("not", inner)
+    elif tag in ("forall", "exists"):
+        varname, body = p[1], simplify_prop(p[2])
+        return (tag, varname, body)
+    else:
+        return p
+
+def tactic_simplify(state: ProofState) -> ProofState:
+    current = state.current()
+    if current is None:
+        raise Exception("No current goal")
+    ctx, goal = current
+    new_goal = simplify_prop(goal)
+    if prop_eq(new_goal, goal):
+        raise Exception("simplify failed: no simplification possible")
+    return state.add_subgoals([(ctx, new_goal)])
+
+def tactic_auto(state: ProofState) -> ProofState:
+    try:
+        return tactic_assumption(state)
+    except Exception:
+        pass
+    try:
+        return tactic_contradiction(state)
+    except Exception:
+        pass
+    try:
+        return tactic_split(state)
+    except Exception:
+        pass
+    current = state.current()
+    if current is None:
+        raise Exception("No current goal")
+    _, goal = current
+    if goal[0] in ("implies", "forall"):
+        try:
+            return tactic_intro(state)
+        except Exception:
+            pass
+    raise Exception("auto tactic failed")
+
+def tactic_dne(state: ProofState, hyp_name: str = "H") -> ProofState:
+    current = state.current()
+    if current is None:
+        raise Exception("No current goal")
+    ctx, goal = current
+
+    # Try to find hypothesis ¬¬P where P = goal
+    for name, prop in ctx:
+        if name == hyp_name and prop[0] == "not" and prop[1][0] == "not":
+            inner = prop[1][1]
+            if prop_eq(inner, goal):
+                return ProofState(state.goals[:-1])  # discharge goal
+    raise Exception("dne tactic failed: hypothesis ¬¬P not found")
+
 # === Lexer and Parser ===
 
 token_specification = [
@@ -338,18 +500,22 @@ token_specification = [
 
 token_re = re.compile('|'.join(f'(?P<{name}>{pattern})' for name, pattern in token_specification))
 
-def lex(characters: str) -> List[Tuple[str, str]]:
+def lex(characters: str) -> List[Tuple[str, str, int, int]]:
     tokens = []
+    line_start = 0
     for mo in token_re.finditer(characters):
         kind = mo.lastgroup
         value = mo.group()
+        start = mo.start()
+        end = mo.end()
         if kind == 'SKIP':
             continue
         elif kind == 'MISMATCH':
-            raise SyntaxError(f'Unexpected character {value!r}')
+            raise SyntaxError(f'Unexpected character {value!r} at position {start}')
         else:
-            tokens.append((kind, value))
+            tokens.append((kind, value, start, end))
     return tokens
+
 
 class Parser:
     def __init__(self, tokens: List[Tuple[str, str]]):
@@ -456,7 +622,6 @@ class Parser:
             self.consume('COMMA')
             terms.append(self.parse_term())
         return terms
-
     def parse_term(self) -> Term:
         tok = self.peek()
         if tok is None:
@@ -464,7 +629,14 @@ class Parser:
         if tok[0] == 'VAR':
             return ("var", self.consume('VAR')[1])
         elif tok[0] == 'CONST':
-            return ("const", self.consume('CONST')[1])
+            name = self.consume('CONST')[1]
+            if self.peek() and self.peek()[0] == 'LPAREN':
+                self.consume('LPAREN')
+                args = self.parse_term_list()
+                self.consume('RPAREN')
+                return ("fun", name, args)
+            else:
+                return ("const", name)
         else:
             raise SyntaxError(f"Unexpected token in term: {tok}")
 
@@ -630,6 +802,71 @@ def process_command(state: Optional[ProofState], command: str) -> Optional[Proof
                     print(f"{i}: {name} : {prop_repr(prop)}")
             return state
 
+        elif cmd_name == "rename":
+            if arg is None:
+                print("Usage: rename <old_name> <new_name>")
+                return state
+            parts2 = arg.split()
+            if len(parts2) != 2:
+                print("Usage: rename <old_name> <new_name>")
+                return state
+            old_name, new_name = parts2
+            new_state = tactic_rename(state, old_name, new_name)
+            print(new_state)
+            return new_state
+
+        elif cmd_name == "clear":
+            if arg is None:
+                print("Usage: clear <name>")
+                return state
+            name = arg.strip()
+            new_state = tactic_clear(state, name)
+            print(new_state)
+            return new_state
+        
+        elif cmd_name == "not_intro":
+            name = arg if arg else "H"
+            new_state = tactic_not_intro(state, name)
+            print(new_state)
+            return new_state
+
+        elif cmd_name == "not_elim":
+            if arg is None:
+                print("Usage: not_elim <neg_hyp_name> <pos_hyp_name> [bottom_name]")
+                return state
+            parts2 = arg.split()
+            if len(parts2) not in (2, 3):
+                print("Usage: not_elim <neg_hyp_name> <pos_hyp_name> [bottom_name]")
+                return state
+            neg_name, pos_name = parts2[0], parts2[1]
+            bottom_name = parts2[2] if len(parts2) == 3 else "Hbot"
+            new_state = tactic_not_elim(state, neg_name, pos_name, bottom_name)
+            print(new_state)
+            return new_state
+
+        elif cmd_name == "assumption":
+            new_state = tactic_assumption(state)
+            print(new_state)
+            return new_state
+
+        elif cmd_name == "simplify":
+            new_state = tactic_simplify(state)
+            print(new_state)
+            return new_state
+
+        elif cmd_name == "auto":
+            new_state = tactic_auto(state)
+            print(new_state)
+            return new_state
+
+        elif cmd_name == "dne":
+            if arg is None:
+                print("Usage: dne <hypothesis_name>")
+                return state
+            new_state = tactic_dne(state, arg)
+            print(new_state)
+            return new_state
+
         else:
             print(f"Unknown command: {cmd_name}")
             return state
@@ -650,7 +887,7 @@ def repl():
             break
         state = process_command(state, cmd)
 
-def run_proof_file(filename: str):
+def run_proof_file(filename: str, step_by_step=False):
     print(f"Running proof script: {filename}")
     state: Optional[ProofState] = None
     with open(filename, 'r', encoding='utf-8') as f:
@@ -663,7 +900,10 @@ def run_proof_file(filename: str):
             if state and state.is_complete():
                 print("Proof complete!")
                 break
+            if step_by_step:
+                input("Press Enter to continue...")
     print("----- End of proof script -----\n")
+
 
 def run_proofs_in_folder(folder_path: str):
     if not os.path.isdir(folder_path):
