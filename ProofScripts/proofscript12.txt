@@ -1,0 +1,3 @@
+goal P
+assume H : ¬¬P
+dne H

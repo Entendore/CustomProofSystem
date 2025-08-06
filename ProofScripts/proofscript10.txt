@@ -1,0 +1,4 @@
+goal P → ⊥ → Q
+intro H1
+intro H2
+contradiction

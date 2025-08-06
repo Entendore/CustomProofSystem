@@ -1,0 +1,7 @@
+goal (P → Q) → (Q → R) → (P → R)
+intro H1
+intro H2
+intro H3
+apply H2
+apply H1
+exact H3

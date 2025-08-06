@@ -1,0 +1,4 @@
+goal ¬P → (P → ⊥)
+intro H1
+intro H2
+exact H1

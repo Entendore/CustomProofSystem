@@ -1,0 +1,7 @@
+goal (P ∨ Q) → (Q ∨ P)
+intro H
+destruct 0
+right
+exact H_left
+left
+exact H_right

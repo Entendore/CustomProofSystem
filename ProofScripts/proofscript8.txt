@@ -1,0 +1,4 @@
+goal P → (P ∨ Q)
+intro H
+left
+exact H

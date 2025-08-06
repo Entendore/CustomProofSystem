@@ -1,0 +1,4 @@
+goal ∃x. P(x)
+exists_intro a
+assume P(a)
+exact P(a)
