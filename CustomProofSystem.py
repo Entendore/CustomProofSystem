@@ -157,12 +157,12 @@ class ProofState:
     def add_subgoals(self, new_goals: List[Goal]) -> 'ProofState':
         return ProofState(self.goals[:-1] + new_goals)
 
-    def pretty_print_proofstate(state: ProofState) -> str:
-        if state.is_complete():
+    def pretty_print_proofstate(self):
+        if self.is_complete():
             return "Proof complete."
 
         lines = []
-        for i, (ctx, goal) in enumerate(state.goals):
+        for i, (ctx, goal) in enumerate(self.goals):
             lines.append(f"Goal {i+1}:")
             if not ctx:
                 lines.append("  Context: ∅")
@@ -174,7 +174,7 @@ class ProofState:
             lines.append("")
         return "\n".join(lines)
 
-    ProofState.__repr__ = pretty_print_proofstate
+ProofState.__repr__ = ProofState.pretty_print_proofstate
 
 # === Tactics ===
 
