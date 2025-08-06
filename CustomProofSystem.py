@@ -18,7 +18,13 @@ from typing import List, Tuple, Optional, Callable, Union
 # ("exists", var_name, body)
 # ("bottom",)
 
-Term = Union[Tuple[str, str], Tuple[str, str, List], Tuple[str, str, List['Term']]]  # ("var", name) or ("const", name) or ("pred", name, [args])
+Term = Union[
+    Tuple[str, str],                         # ("var", name)
+    Tuple[str, str],                         # ("const", name)
+    Tuple[str, str, List[Term]],             # ("fun", name, args)
+    Tuple[str, List[str], Term],             # ("lambda", [params], body)
+    Tuple[str, Term, Term],                  # ("app", function_term, argument_term)
+]
 
 Prop = Union[
     Tuple[str, str],  # "var" or "const"
@@ -29,28 +35,37 @@ Prop = Union[
     Tuple[str, str, 'Prop'],  # "forall", "exists"
 ]
 
-Context = List[Tuple[str, Prop]] 
+
+# === Equality ===
+
+def prop_eq(p1: Prop, p2: Prop) -> bool:
+    return p1 == p2
+
+def term_eq(t1: Term, t2: Term) -> bool:
+    return t1 == t2
+
+# === Term / Prop Constructors ===
 
 def fun(name: str, args: List[Term]) -> Term:
     return ("fun", name, args)
 
-def var(name: str) -> Prop:
+def var(name: str) -> Term:
     return ("var", name)
 
-def const(name: str) -> Prop:
+def const(name: str) -> Term:
     return ("const", name)
 
 def pred(name: str, args: List[Term]) -> Prop:
     return ("pred", name, args)
 
-def implies(premise: Prop, conclusion: Prop) -> Prop:
-    return ("implies", premise, conclusion)
+def implies(p: Prop, q: Prop) -> Prop:
+    return ("implies", p, q)
 
-def and_(left: Prop, right: Prop) -> Prop:
-    return ("and", left, right)
+def and_(p: Prop, q: Prop) -> Prop:
+    return ("and", p, q)
 
-def or_(left: Prop, right: Prop) -> Prop:
-    return ("or", left, right)
+def or_(p: Prop, q: Prop) -> Prop:
+    return ("or", p, q)
 
 def not_(p: Prop) -> Prop:
     return ("not", p)
@@ -64,124 +79,253 @@ def exists(varname: str, body: Prop) -> Prop:
 def bottom() -> Prop:
     return ("bottom",)
 
+
 # === Helpers ===
 
 def prop_eq(p1: Prop, p2: Prop) -> bool:
     return p1 == p2
 
-def prop_repr(f):
+def prop_repr(f: Prop) -> str:
     match f:
         case ('not', p): return f"¬{prop_repr_paren(p)}"
         case ('and', p, q): return f"{prop_repr_paren(p)} ∧ {prop_repr_paren(q)}"
         case ('or', p, q): return f"{prop_repr_paren(p)} ∨ {prop_repr_paren(q)}"
-        case ('imp', p, q): return f"{prop_repr_paren(p)} → {prop_repr(q)}"
-        case ('iff', p, q): return f"{prop_repr_paren(p)} ↔ {prop_repr_paren(q)}"
-        case ('forall', var, body): return f"∀{var}. {prop_repr(body)}"
-        case ('exists', var, body): return f"∃{var}. {prop_repr(body)}"
-        case ('⊥',): return "⊥"
-        case str(): return f
+        case ('implies', p, q): return f"{prop_repr_paren(p)} → {prop_repr(q)}"
+        case ('forall', v, body): return f"∀{v}. {prop_repr(body)}"
+        case ('exists', v, body): return f"∃{v}. {prop_repr(body)}"
+        case ('bottom',): return "⊥"
+        case ('pred', name, args): return f"{name}({', '.join(term_repr(a) for a in args)})"
+        case ('var', x): return x
+        case ('const', c): return c
         case _: return str(f)
 
 
-def prop_repr_paren(f):
-    if isinstance(f, tuple) and f[0] in {'and', 'or', 'imp', 'iff'}:
+def prop_repr_paren(f: Prop) -> str:
+    if isinstance(f, tuple) and f[0] in {"and", "or", "implies"}:
         return f"({prop_repr(f)})"
     return prop_repr(f)
 
 
-def pretty_context(context):
-    if not context:
+def pretty_context(ctx: Context) -> str:
+    if not ctx:
         return "  Context: ∅"
-    
-    maxlen = max(len(name) for name, _ in context)
-    lines = [f"  {name.ljust(maxlen)} : {prop_repr(formula)}" for name, formula in context]
+    maxlen = max(len(name) for name, _ in ctx)
+    lines = [f"  {name.ljust(maxlen)} : {prop_repr(formula)}" for name, formula in ctx]
     return "  Context:\n" + "\n".join(lines)
 
 
-def pretty_goal(context, goal):
-    ctx_str = pretty_context(context)
-    goal_str = f"  Goal: {prop_repr(goal)}"
-    return f"{ctx_str}\n{goal_str}"
+def pretty_goal(ctx: Context, goal: Prop) -> str:
+    return f"{pretty_context(ctx)}\n  Goal: {prop_repr(goal)}"
 
+
+def pretty_goals(goals: List[Tuple[Context, Prop]]) -> str:
+    if not goals:
+        return "✔ All goals proven!"
+    result = []
+    for i, (ctx, g) in enumerate(goals):
+        result.append(f"Goal {i+1}:\n{pretty_goal(ctx, g)}\n")
+    return "\n".join(result)
 
 def term_repr(t: Term) -> str:
     tag = t[0]
-    if tag in ("var", "const"):
+    if tag == "var" or tag == "const":
         return t[1]
+    elif tag == "fun":
+        name, args = t[1], t[2]
+        return f"{name}({', '.join(term_repr(a) for a in args)})"
+    elif tag == "lambda":
+        params, body = t[1], t[2]
+        return f"(λ{','.join(params)}. {term_repr(body)})"
+    elif tag == "app":
+        f, a = t[1], t[2]
+        return f"({term_repr(f)} {term_repr(a)})"
     else:
-        return f"<term:{t}>"
+        return str(t)
+
 
 # === Substitution ===
 
+def substitute_var(prop: Prop, old: str, new: str) -> Prop:
+    match prop:
+        case ('var', x): return ('var', new) if x == old else prop
+        case ('const', _): return prop
+        case ('pred', name, args):
+            return ('pred', name, [subst_term_var(a, old, new) for a in args])
+        case ('not', p): return ('not', substitute_var(p, old, new))
+        case ('and' | 'or' | 'implies' as tag, p, q):
+            return (tag, substitute_var(p, old, new), substitute_var(q, old, new))
+        case ('forall' | 'exists' as tag, v, body):
+            if v == old:
+                return (tag, v, body)
+            elif v == new:
+                fresh = fresh_var(free_vars(prop) | {new})
+                renamed_body = substitute_var(body, v, fresh)
+                return (tag, fresh, substitute_var(renamed_body, old, new))
+            else:
+                return (tag, v, substitute_var(body, old, new))
+        case ('bottom',): return prop
+        case _: return prop
+
+def subst_term_var(t: Term, old: str, new: str) -> Term:
+    match t:
+        case ('var', x): return ('var', new) if x == old else t
+        case ('const', _): return t
+        case ('fun', f, args): return ('fun', f, [subst_term_var(a, old, new) for a in args])
+        case ('lambda', params, body):
+            if old in params:
+                return t
+            elif new in params:
+                fresh_params = [fresh_var(set(params)) if p == new else p for p in params]
+                body = substitute_var(body, new, fresh_params[params.index(new)])
+                return ('lambda', fresh_params, subst_term_var(body, old, new))
+            else:
+                return ('lambda', params, subst_term_var(body, old, new))
+        case ('app', f, a):
+            return ('app', subst_term_var(f, old, new), subst_term_var(a, old, new))
+
+def free_vars(prop: Prop) -> set[str]:
+    match prop:
+        case ('var', x): return {x}
+        case ('const', _): return set()
+        case ('pred', _, args): return set().union(*(free_vars_term(a) for a in args))
+        case ('not', p): return free_vars(p)
+        case ('and' | 'or' | 'implies', p, q): return free_vars(p) | free_vars(q)
+        case ('forall' | 'exists', v, body): return free_vars(body) - {v}
+        case ('bottom',): return set()
+        case _: return set()
+
+def free_vars_term(t: Term) -> set[str]:
+    match t:
+        case ('var', x): return {x}
+        case ('const', _): return set()
+        case ('fun', _, args): return set().union(*(free_vars_term(a) for a in args))
+        case ('lambda', params, body): return free_vars_term(body) - set(params)
+        case ('app', f, a): return free_vars_term(f) | free_vars_term(a)
+
+
+def subst_term(t: Term, varname: str, replacement: Term) -> Term:
+    match t:
+        case ('var', x): return replacement if x == varname else t
+        case ('const', _): return t
+        case ('fun', name, args):
+            return ('fun', name, [subst_term(a, varname, replacement) for a in args])
+        case ('lambda', params, body):
+            if varname in params:
+                return t
+            elif any(p in free_vars_term(replacement) for p in params):
+                fresh_params = [fresh_var(free_vars_term(body) | free_vars_term(replacement)) for _ in params]
+                renamed_body = body
+                for old, new in zip(params, fresh_params):
+                    renamed_body = subst_term_var(renamed_body, old, new)
+                return ('lambda', fresh_params, subst_term(renamed_body, varname, replacement))
+            else:
+                return ('lambda', params, subst_term(body, varname, replacement))
+        case ('app', f, a):
+            return ('app', subst_term(f, varname, replacement), subst_term(a, varname, replacement))
+
+
+
 def substitute(prop: Prop, varname: str, term: Term) -> Prop:
-    tag = prop[0]
-    if tag == "var":
-        return prop if prop[1] != varname else term
-    elif tag == "const":
-        return prop
-    elif tag == "pred":
-        name, args = prop[1], prop[2]
-        new_args = [term if (arg[0] == "var" and arg[1] == varname) else arg for arg in args]
-        return ("pred", name, new_args)
-    elif tag in ("implies", "and", "or"):
-        left, right = prop[1], prop[2]
-        return (tag, substitute(left, varname, term), substitute(right, varname, term))
-    elif tag == "not":
-        return ("not", substitute(prop[1], varname, term))
-    elif tag == "forall":
-        v, body = prop[1], prop[2]
-        if v == varname:
-            return prop
-        return ("forall", v, substitute(body, varname, term))
-    elif tag == "exists":
-        v, body = prop[1], prop[2]
-        if v == varname:
-            return prop
-        return ("exists", v, substitute(body, varname, term))
-    elif tag == "bottom":
-        return prop
-    else:
-        return prop
+    match prop:
+        case ('var', x): return prop
+        case ('const', _): return prop
+        case ('pred', name, args):
+            return ('pred', name, [subst_term(a, varname, term) for a in args])
+        case ('not', p): return ('not', substitute(p, varname, term))
+        case ('and' | 'or' | 'implies' as tag, p, q):
+            return (tag, substitute(p, varname, term), substitute(q, varname, term))
+        case ('forall' | 'exists' as tag, v, body):
+            if v == varname:
+                return (tag, v, body)
+            elif v in free_vars_term(term):
+                fresh = fresh_var(free_vars(body) | free_vars_term(term))
+                renamed = substitute_var(body, v, fresh)
+                return (tag, fresh, substitute(renamed, varname, term))
+            else:
+                return (tag, v, substitute(body, varname, term))
+        case ('bottom',): return prop
+        case _: return prop
+
+def alpha_eq(p1: Prop, p2: Prop) -> bool:
+    match p1, p2:
+        case ("forall", v1, b1), ("forall", v2, b2):
+            fresh = "_a"
+            return alpha_eq(substitute_var(b1, v1, fresh), substitute_var(b2, v2, fresh))
+        case ("exists", v1, b1), ("exists", v2, b2):
+            fresh = "_a"
+            return alpha_eq(substitute_var(b1, v1, fresh), substitute_var(b2, v2, fresh))
+        case (tag1, *args1), (tag2, *args2) if tag1 == tag2:
+            return all(alpha_eq(x, y) for x, y in zip(args1, args2))
+        case _:
+            return p1 == p2
+
+
+def beta_reduce(term: Term) -> Term:
+    match term:
+        case ("app", ("lambda", [x], body), arg):
+            return beta_reduce(subst_term(body, x, arg))
+        case ("app", f, a):
+            f_red = beta_reduce(f)
+            a_red = beta_reduce(a)
+            if f_red != f or a_red != a:
+                return beta_reduce(("app", f_red, a_red))
+            return ("app", f_red, a_red)
+        case ("lambda", params, body):
+            body_red = beta_reduce(body)
+            if body_red != body:
+                return ("lambda", params, body_red)
+            return term
+        case ("fun", name, args):
+            new_args = [beta_reduce(arg) for arg in args]
+            if new_args != args:
+                return ("fun", name, new_args)
+            return term
+        case _:
+            return term
+
 
 # === Proof state ===
 
 # A goal is (context, goal)
-Context = List[Prop]
+Context = List[Tuple[str, Prop]]
 Goal = Tuple[Context, Prop]
 
 class ProofState:
     def __init__(self, goals: List[Goal]):
         self.goals = goals 
-        self.context = []
 
     def current(self) -> Optional[Goal]:
         return self.goals[-1] if self.goals else None
 
     def is_complete(self) -> bool:
-        return len(self.goals) == 0
+         return not self.goals
 
     def add_subgoals(self, new_goals: List[Goal]) -> 'ProofState':
         return ProofState(self.goals[:-1] + new_goals)
 
     def pretty_print_proofstate(self):
         if self.is_complete():
-            return "Proof complete."
+            return "✅ Proof complete."
 
         lines = []
         for i, (ctx, goal) in enumerate(self.goals):
-            lines.append(f"Goal {i+1}:")
+            lines.append(f"{'>>> ' if i == len(self.goals) - 1 else '    '}Goal {i+1}:")
             if not ctx:
                 lines.append("  Context: ∅")
             else:
+                maxlen = max(len(name) for name, _ in ctx)
                 lines.append("  Context:")
-                max_name_len = max(len(name) for name, _ in ctx)
                 for name, prop in ctx:
-                    lines.append(f"    {name.ljust(max_name_len)} : {prop_repr(prop)}")
+                    lines.append(f"    {name.ljust(maxlen)} : {prop_repr(prop)}")
             lines.append(f"  Goal: {prop_repr(goal)}")
             lines.append("")
         return "\n".join(lines)
+    
+    def __str__(self):
+        return self.pretty_print_proofstate()
 
-ProofState.__repr__ = ProofState.pretty_print_proofstate
+
+ProofState.__repr__ = ProofState.__str__
 
 # === Tactics ===
 
