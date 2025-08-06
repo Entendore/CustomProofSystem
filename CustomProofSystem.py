@@ -485,6 +485,7 @@ token_specification = [
     ('FORALL',   r'∀|forall'),
     ('EXISTS',   r'∃|exists'),
     ('NOT',      r'¬|~|not'),
+    ('BOTTOM', r'⊥|bottom'),
     ('AND',      r'∧|&|and'),
     ('OR',       r'∨|\||or'),
     ('IMPLIES',  r'→|->|implies'),
@@ -601,6 +602,7 @@ class Parser:
             prop = self.parse_implication()
             self.consume('RPAREN')
             return prop
+        
         elif tok[0] == 'CONST':
             pred_name = self.consume('CONST')[1]
             if self.peek() and self.peek()[0] == 'LPAREN':
@@ -610,9 +612,15 @@ class Parser:
                 return pred(pred_name, args)
             else:
                 return pred(pred_name, [])
+            
         elif tok[0] == 'VAR':
             var_name = self.consume('VAR')[1]
             return var(var_name)
+        
+        elif tok[0] == 'BOTTOM':
+            self.consume('BOTTOM')
+            return bottom()
+
         else:
             raise SyntaxError(f"Unexpected token {tok}")
 
