@@ -69,51 +69,39 @@ def bottom() -> Prop:
 def prop_eq(p1: Prop, p2: Prop) -> bool:
     return p1 == p2
 
-def prop_repr(prop, indent=0):
-    pad = '  ' * indent
+def prop_repr(f):
+    match f:
+        case ('not', p): return f"¬{prop_repr_paren(p)}"
+        case ('and', p, q): return f"{prop_repr_paren(p)} ∧ {prop_repr_paren(q)}"
+        case ('or', p, q): return f"{prop_repr_paren(p)} ∨ {prop_repr_paren(q)}"
+        case ('imp', p, q): return f"{prop_repr_paren(p)} → {prop_repr(q)}"
+        case ('iff', p, q): return f"{prop_repr_paren(p)} ↔ {prop_repr_paren(q)}"
+        case ('forall', var, body): return f"∀{var}. {prop_repr(body)}"
+        case ('exists', var, body): return f"∃{var}. {prop_repr(body)}"
+        case ('⊥',): return "⊥"
+        case str(): return f
+        case _: return str(f)
 
-    kind = prop[0]
-    if kind == "var":
-        return prop[1]
-    elif kind == "const":
-        return prop[1]
-    elif kind == "fun":
-        name, args = prop[1], prop[2]
-        args_str = ", ".join(prop_repr(arg) for arg in args)
-        return f"{name}({args_str})"
-    elif kind == "pred":
-        name, args = prop[1], prop[2]
-        if args:
-            args_str = ", ".join(prop_repr(arg) for arg in args)
-            return f"{name}({args_str})"
-        else:
-            return name
-    elif kind == "not":
-        return f"¬{prop_repr(prop[1], indent)}"
-    elif kind == "and":
-        left = prop_repr(prop[1], indent + 1)
-        right = prop_repr(prop[2], indent + 1)
-        return f"(\n{pad}  {left} ∧\n{pad}  {right}\n{pad})"
-    elif kind == "or":
-        left = prop_repr(prop[1], indent + 1)
-        right = prop_repr(prop[2], indent + 1)
-        return f"(\n{pad}  {left} ∨\n{pad}  {right}\n{pad})"
-    elif kind == "implies":
-        left = prop_repr(prop[1], indent + 1)
-        right = prop_repr(prop[2], indent + 1)
-        return f"(\n{pad}  {left} →\n{pad}  {right}\n{pad})"
-    elif kind == "forall":
-        var = prop[1]
-        body = prop_repr(prop[2], indent + 1)
-        return f"∀{var}.\n{pad}  {body}"
-    elif kind == "exists":
-        var = prop[1]
-        body = prop_repr(prop[2], indent + 1)
-        return f"∃{var}.\n{pad}  {body}"
-    elif kind == "bottom":
-        return "⊥"
-    else:
-        return str(prop)
+
+def prop_repr_paren(f):
+    if isinstance(f, tuple) and f[0] in {'and', 'or', 'imp', 'iff'}:
+        return f"({prop_repr(f)})"
+    return prop_repr(f)
+
+
+def pretty_context(context):
+    if not context:
+        return "  Context: ∅"
+    
+    maxlen = max(len(name) for name, _ in context)
+    lines = [f"  {name.ljust(maxlen)} : {prop_repr(formula)}" for name, formula in context]
+    return "  Context:\n" + "\n".join(lines)
+
+
+def pretty_goal(context, goal):
+    ctx_str = pretty_context(context)
+    goal_str = f"  Goal: {prop_repr(goal)}"
+    return f"{ctx_str}\n{goal_str}"
 
 
 def term_repr(t: Term) -> str:
@@ -240,17 +228,6 @@ def tactic_exact(state: ProofState, term: Union[str, Prop]) -> ProofState:
             return ProofState(state.goals[:-1])
         else:
             raise Exception("exact tactic failed: formula doesn't match goal")
-
-
-def tactic_apply(state: ProofState, implication: Prop) -> ProofState:
-    current = state.current()
-    if current is None:
-        raise Exception("No current goal")
-    ctx, goal = current
-    if implication[0] == "implies" and prop_eq(implication[2], goal):
-        return state.add_subgoals([(ctx, implication[1])])
-    else:
-        raise Exception("apply tactic failed")
 
 def tactic_split(state: ProofState) -> ProofState:
     current = state.current()
@@ -509,28 +486,33 @@ def tactic_dne(state: ProofState, hyp_name: str = "H") -> ProofState:
                 return ProofState(state.goals[:-1])  # discharge goal
     raise Exception("dne tactic failed: hypothesis ¬¬P not found")
 
-def tactic_apply(state: ProofState, hyp_name: str) -> ProofState:
-    current = state.current()
-    if current is None:
-        raise Exception("No current goal")
-    ctx, goal = current
+def tactic_apply(state: ProofState, arg: str) -> ProofState:
+    if not state.goals:
+        raise ProofError("No goals to apply tactic to.")
 
-    # Find hypothesis by name
-    hyp = next((f for n, f in ctx if n == hyp_name), None)
-    if hyp is None:
-        raise Exception(f"apply tactic failed: hypothesis '{hyp_name}' not found")
+    context, goal = state.goals[0]
 
-    # Check if hyp is implication (represented as ('implies', A, B))
-    if isinstance(hyp, tuple) and hyp[0] == "implies":
-        A, B = hyp[1], hyp[2]
-        if prop_eq(B, goal):
-            # Replace current goal with A
-            new_goals = state.goals[:-1] + [(ctx, A)]
-            return ProofState(new_goals)
-        else:
-            raise Exception("apply tactic failed: goal does not match implication conclusion")
-    else:
-        raise Exception("apply tactic failed: hypothesis is not an implication")
+    # Try to find the hypothesis named `arg`
+    hyp_formula = None
+    for name, formula in context:
+        if name == arg:
+            hyp_formula = formula
+            break
+
+    if hyp_formula is None:
+        raise ProofError(f"apply tactic failed: hypothesis '{arg}' not found.")
+
+    if not (isinstance(hyp_formula, tuple) and hyp_formula[0] == 'imp'):
+        raise ProofError(f"apply tactic failed: hypothesis '{arg}' is not an implication.")
+
+    A, B = hyp_formula[1], hyp_formula[2]
+
+    if not formulas_equal(B, goal):
+        raise ProofError(f"apply tactic failed: conclusion of '{arg}' does not match goal.")
+
+    # Replace the current goal with A
+    new_goals = [(context, A)] + state.goals[1:]
+    return ProofState(new_goals)
 
 def tactic_assumption(state: ProofState) -> ProofState:
     current = state.current()
@@ -716,6 +698,7 @@ class Parser:
             self.consume('COMMA')
             terms.append(self.parse_term())
         return terms
+    
     def parse_term(self) -> Term:
         tok = self.peek()
         if tok is None:
@@ -733,6 +716,46 @@ class Parser:
                 return ("const", name)
         else:
             raise SyntaxError(f"Unexpected token in term: {tok}")
+        
+    def parse_assume(command: str):
+        if not command.startswith("assume "):
+            raise ValueError("Invalid assume command")
+
+        bindings = command[len("assume "):]
+        
+        # Split on commas not inside parentheses
+        parts = split_outside_parens(bindings, ',')
+
+        result = []
+        for part in parts:
+            part = part.strip()
+            if ':' not in part:
+                raise ValueError(f"Expected ':' in assumption: {part}")
+            name, formula_str = map(str.strip, part.split(':', 1))
+            formula = parse_formula(formula_str)
+            result.append((name, formula))
+        return result
+
+
+    def split_outside_parens(s, delimiter):
+        result = []
+        level = 0
+        current = []
+
+        for c in s:
+            if c == '(':
+                level += 1
+            elif c == ')':
+                level -= 1
+            elif c == delimiter and level == 0:
+                result.append(''.join(current))
+                current = []
+                continue
+            current.append(c)
+
+        if current:
+            result.append(''.join(current))
+        return result
 
 # === Proof Assistant Controller ===
 
