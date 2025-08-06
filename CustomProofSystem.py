@@ -762,7 +762,6 @@ def process_command(state: Optional[ProofState], command: str) -> Optional[Proof
 
 
     try:
-        
         if cmd_name == "help":
             print_help()
             return state
@@ -988,11 +987,10 @@ def process_command(state: Optional[ProofState], command: str) -> Optional[Proof
                     return state
                 new_ctx.append((name, formula))
 
-    new_goals = state.goals[:-1] + [(new_ctx, goal)]
-    new_state = ProofState(new_goals)
-    print(new_state)
-    return new_state
-
+            new_goals = state.goals[:-1] + [(new_ctx, goal)]
+            new_state = ProofState(new_goals)
+            print(new_state)
+            return new_state
 
         else:
             print(f"Unknown command: {cmd_name}")
