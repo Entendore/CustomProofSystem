@@ -1,0 +1,10 @@
+# Test basic propositional logic tactics
+goal (P → Q) → (Q → R) → P → R
+intro Hpq
+intro Hqr
+intro Hp
+exact Hqr
+exact Hpq
+exact Hp
+proof
+export transitivity

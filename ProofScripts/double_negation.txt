@@ -1,0 +1,6 @@
+# Test classical reasoning with double negation
+goal ¬¬P → P
+intro Hnnp
+dne Hnnp
+proof
+export double_negation_elim

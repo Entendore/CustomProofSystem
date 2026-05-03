@@ -1,3 +1,0 @@
-goal P ∨ Q → P ∨ Q
-intro
-exact P ∨ Q

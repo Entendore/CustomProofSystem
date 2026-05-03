@@ -1,0 +1,5 @@
+# This script should fail, testing error handling
+goal P → Q
+intro H
+# Should fail: can't prove Q from P
+exact H

@@ -1,0 +1,10 @@
+# A more complex proof involving multiple tactics
+goal (P ∨ Q) ∧ (P → R) ∧ (Q → R) → R
+intro Hand
+destruct Hand
+destruct Hand_left
+exact Hand_right_left
+exact Hand_left_left
+exact Hand_right_right
+exact Hand_left_right
+proof

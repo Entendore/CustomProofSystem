@@ -1,4 +1,0 @@
-goal ∀x. P(x) → P(x)
-intro H
-intro x
-exact x

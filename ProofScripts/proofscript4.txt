@@ -1,5 +1,0 @@
-goal (∀x. P(x)) → (∃y. P(y))
-intro H
-exists_intro a
-forall_elim 0 a
-exact H

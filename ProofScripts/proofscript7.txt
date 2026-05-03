@@ -1,4 +1,0 @@
-goal (P ∧ Q) → P
-intro H
-destruct 0
-exact H_left
