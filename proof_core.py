@@ -356,7 +356,12 @@ def tactic_intro(state: ProofState, name: str = "H") -> ProofState:
         return state.add_subgoals([(ctx + [(name, goal[1])], goal[2])])
     elif goal[0] == "forall":
         v, body = goal[1], goal[2]
-        fresh = fresh_var(free_vars(body) | {n for n, _ in ctx})
+        
+        if name:
+            fresh = name
+        else:
+            fresh = fresh_var(free_vars(body) | {n for n, _ in ctx})
+            
         return state.add_subgoals([(ctx, substitute(body, v, var(fresh)))])
     raise ValueError(f"intro failed: goal is {goal[0]}")
 
