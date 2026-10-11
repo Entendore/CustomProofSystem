@@ -1,0 +1,13 @@
+# Test equality reasoning
+goal ∀x. x = x
+intro x
+reflexivity
+proof
+
+# Test equality with functions
+goal ∀x y. x = y → f(x) = f(y)
+intro x
+intro y
+intro Hxy
+# This would require equality substitution, showing limitations
+# of the current system

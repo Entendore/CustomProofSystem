@@ -1,0 +1,10 @@
+# Test universal and existential quantifiers
+goal (∀x. P(x) → Q(x)) → (∀x. P(x)) → ∀x. Q(x)
+intro Himpl
+intro Hforall
+intro x
+forall_elim 1 x
+forall_elim 0 x
+exact Himpl_inst
+exact Hforall_inst
+proof
